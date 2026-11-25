@@ -1,0 +1,46 @@
+# 构建产物 / 打包目录
+work/
+dist/
+dist2/
+dist*/
+build/
+build_*/
+pyi_*/
+*.spec.bak
+
+# 依赖与虚拟环境
+pylibs/
+.venv/
+venv/
+
+# 发布包（体积大，走 Releases 或别处）
+*.zip
+*.exe
+*.7z
+
+# 运行时缓存 / 本机设置
+settings.json
+bsa_index.json.gz
+_photocard_preview/
+_bc7_tmp/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+
+# 桌面操作留下的截图
+.dsh-pilot/
+.dsh-*/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# 旧版本随包目录 / 测试输出
+PhotoCardTool_exe*/
+Textures/
+*.dds
+!materials/*.dds
+!res/*.dds
