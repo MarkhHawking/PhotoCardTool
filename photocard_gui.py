@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""PhotoCard Tool v23 —— 卡片生成 / 供图拼卡 / 盒子 + ESP
+"""PhotoCard Tool v24 —— 卡片生成 / 供图拼卡 / 盒子 + ESP
 
 页签 1 卡片生成：NIF -> <名字>.dds(BC7) + _front/_side.png；预设(默认/细节/柔和) + 高级参数折叠。
 页签 2 供图拼卡：全屏框选截图(自动方图)填正面/侧面 -> 实时预览整卡 ->
-                 <名字>.dds(BC7 2048×1024) + <名字>_front.png + <名字>_side.png。
+                 <名字>.dds(BC7，默认 1024×1024，可选 2048) + _front/_side.png。
 页签 3 盒子 + ESP：选源 ESP/发型 -> 选 MO2 mod 定位 DDS/XML -> 自定义命名 -> 生成
                     （复制 NIF/DDS/XML 并改写内部路径，盒子 nif 与 ESP 一起产出）
 """
@@ -68,7 +68,7 @@ from pct.paths import (APP_DIR, BASE, BASE_CARD, BSA_CACHE, CACHE_DIR, MAT, SETT
 from pct.imaging import (BG, CARD_RECT, build_card, compose_card, dds_size, panel, run_card,
                          square_crop, to_bc7)
 from pct.scene import load_scene, render_view
-from pct.mods import (_index_cache, _meshes_subdir, clean_tex_path, find_in_mod, rel_to_root,
+from pct.mods import (scan_bodyslide, write_osp_shell, _index_cache, _meshes_subdir, clean_tex_path, find_in_mod, rel_to_root,
                       scan_assets, scan_mods)
 from pct.ui import (FuzzyCombo, ToolTip, _fuzzy_match, _fuzzy_rank, log_trim)
 from pct.pack import MissingTexture, make_pack
@@ -913,7 +913,7 @@ def main_gui():
     ttk.Label(src_row, text='源 ESP：').pack(side='left')
     C_OK, C_FOLLOW, C_CHANGE, C_REQ = '#ffffff', '#e3ecfa', '#fdeccd', '#fadada'
     RING = {'ok': '#cfcfcf', 'follow': '#9dbcf0', 'change': '#e8b56a', 'req': '#e08a8a'}
-    BG = {'ok': C_OK, 'follow': C_FOLLOW, 'change': C_CHANGE, 'req': C_REQ}
+    BG_STATE = {'ok': C_OK, 'follow': C_FOLLOW, 'change': C_CHANGE, 'req': C_REQ}
     rings = {}
 
     def _ent(master, var, width, **kw):
@@ -923,7 +923,7 @@ def main_gui():
     def set_state(w, st='ok'):
         try:
             if isinstance(w, tk.Entry):
-                w.configure(bg=BG[st])
+                w.configure(bg=BG_STATE[st])
             else:
                 r = rings.get(w)
                 if r is not None:
@@ -985,6 +985,7 @@ def main_gui():
     rings[modcb] = mod_ring
     ttk.Button(mod_row, text='扫描 mods', command=lambda: refresh_mods()).pack(side='left')
     ttk.Button(mod_row, text='定位素材', command=lambda: locate()).pack(side='left', padx=(6, 0))
+    ttk.Button(mod_row, text='生成 BodySlide 工程…', command=lambda: make_bs_shell()).pack(side='left', padx=(6, 0))
     r += 1
     ttk.Label(t2, text='（mods 根目录 / 游戏 Data 在「设置 → 路径设置…」里改）',
               foreground='#777').grid(row=r, column=0, columnspan=4, sticky='w')
@@ -1013,6 +1014,9 @@ def main_gui():
             log2_to('这一行没有可打开的文件')
             return
         try:
+            if p.lower().endswith(('.osp', '.xml')):
+                subprocess.Popen(['explorer', '/select,', os.path.abspath(p)])
+                return
             if mode == 'folder' and not os.path.isdir(p):
                 subprocess.Popen(['explorer', '/select,', os.path.abspath(p)])
             else:
@@ -1435,6 +1439,12 @@ def main_gui():
             allrows = [('穿着 NIF', worn, wa, None, None, worn, '', wa, '')] + \
                 [('XML', x, find_in_mod(moddir, x), None, None, x, '', find_in_mod(moddir, x), '')
                  for x in xmls] + rows
+            try:
+                for _p, _k in scan_bodyslide(moddir, os.path.basename(worn)):
+                    _rel = os.path.relpath(_p, moddir)
+                    allrows.append(('BS 工程', _rel, _p, None, None, _rel, '', _p, ''))
+            except Exception:
+                log2_to(traceback.format_exc())
             for kind, rel, found, key, raw, eff, psrc, disp, bsa_hit in allrows:
                 asset_rows.append(dict(kind=kind, rel=rel, src=found or bsa_hit))
                 iid = tree.insert('', 'end', values=(kind, rel, disp or ('—' if not rel else '✗ 缺失')))
@@ -1463,6 +1473,32 @@ def main_gui():
             log2_to(traceback.format_exc())
             if not quiet:
                 messagebox.showerror('失败', str(e))
+
+    def make_bs_shell():
+        """为当前发型生成一个 BodySlide 起步工程（.osp 骨架，滑块数据仍需 OS 生成）。"""
+        s = selected_style()
+        if not s:
+            messagebox.showwarning('提示', '先选源发型')
+            return
+        rel = (s.get('mod3') or s.get('mod4') or '').replace('/', '\\')
+        nif = os.path.basename(rel)
+        if not nif:
+            messagebox.showwarning('提示', '这个发型没有模型路径')
+            return
+        stem = os.path.splitext(nif)[0]
+        name = (full_var.get().strip() or stem) + ' BodySlide'
+        out = out2.get().strip() or APP_DIR
+        try:
+            p = write_osp_shell(out, name, nif)
+        except Exception as e:
+            messagebox.showerror('失败', str(e))
+            return
+        log2_to('已生成 BodySlide 起步工程：%s' % p)
+        log2_to('接着在 BodySlide / Outfit Studio 里打开它，用 Conform All 刷滑块后保存 —— 滑块形变数据只能这样生成')
+        try:
+            subprocess.Popen(['explorer', '/select,', os.path.abspath(p)])
+        except Exception:
+            pass
 
     def esp_path_now():
         n = (esp_name.get().strip() or 'Hair_BoxWorld')

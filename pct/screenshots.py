@@ -1,9 +1,50 @@
 # -*- coding: utf-8 -*-
 """全屏半透明遮罩、拖动框选、自动方形裁切。"""
 import time
+import traceback
 import tkinter as tk
 
 from PIL import Image, ImageEnhance, ImageGrab, ImageTk
+
+
+def _cursor_pos():
+    try:
+        import ctypes
+        from ctypes import wintypes
+        pt = wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        return pt.x, pt.y
+    except Exception:
+        return 0, 0
+
+
+def _monitor_rect(x, y):
+    """返回 (left, top, width, height, dpi) —— 物理像素 + 该显示器 DPI。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [('cbSize', wintypes.DWORD), ('rcMonitor', wintypes.RECT),
+                        ('rcWork', wintypes.RECT), ('dwFlags', wintypes.DWORD)]
+
+        u = ctypes.windll.user32
+        hmon = u.MonitorFromPoint(wintypes.POINT(x, y), 2)   # MONITOR_DEFAULTTONEAREST
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        if not u.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+            return None
+        dpi = 96
+        try:
+            dx, dy = wintypes.DWORD(), wintypes.DWORD()
+            ctypes.windll.shcore.GetDpiForMonitor(hmon, 0, ctypes.byref(dx), ctypes.byref(dy))
+            dpi = int(dx.value) or 96
+        except Exception:
+            pass
+        r = mi.rcMonitor
+        return r.left, r.top, r.right - r.left, r.bottom - r.top, dpi
+    except Exception:
+        return None
 
 
 def _virtual_metrics(root):
@@ -66,13 +107,27 @@ def shoot_screen(root, on_done, countdown=2.6):
         messagebox.showerror('截图失败', str(e))
         return
 
-    vx, vy, vw, vh = _virtual_metrics(root)
-    disp = shot if shot.size == (vw, vh) else shot.resize((vw, vh), Image.LANCZOS)
+    # 只铺「光标所在的显示器」，并换算成 Tk 的逻辑像素：
+    # 本进程是 DPI-unaware 的，Tk 把 1 逻辑像素放大成 S 物理像素，
+    # 所以遮罩尺寸必须除以 S、截图内容也先缩到逻辑尺寸，显示出来才 1:1。
+    mon = _monitor_rect(*_cursor_pos())
+    if mon is None:
+        mon = (0, 0, root.winfo_screenwidth(), root.winfo_screenheight(), 96)
+    mL, mT, mW, mH, mDpi = mon
+    S = (mDpi or 96) / 96.0
+    vx, vy, _vw_all, _vh_all = _virtual_metrics(root)
+    box = (mL - vx, mT - vy, mL - vx + mW, mT - vy + mH)
+    try:
+        src = shot.crop(box)
+    except Exception:
+        src = shot.copy()
+    vw, vh = max(1, int(round(src.width / S))), max(1, int(round(src.height / S)))
+    disp = src if src.size == (vw, vh) else src.resize((vw, vh), Image.LANCZOS)
     dim = ImageEnhance.Brightness(disp).enhance(0.42)
     top = tk.Toplevel(root)
     top.overrideredirect(True)
     top.attributes('-topmost', True)
-    top.geometry('%dx%d+%d+%d' % (vw, vh, vx, vy))
+    top.geometry('%dx%d+%d+%d' % (vw, vh, int(round(mL / S)), int(round(mT / S))))
     cv = tk.Canvas(top, highlightthickness=0, bd=0, cursor='crosshair', bg='#000')
     cv.pack(fill='both', expand=True)
     bg_pi = ImageTk.PhotoImage(dim)
@@ -154,18 +209,15 @@ def shoot_screen(root, on_done, countdown=2.6):
             return
         st['drag'] = False
         cx, cy, side = square(st['x0'], st['y0'], e.x, e.y)
-        # 显示坐标 -> 截屏像素：逐轴比例可能不同（多显示器 DPI 缩放），
-        # 所以取两边中较大的边长，保证源图里也是正圆/正方形，而不是被拉成椭圆/矩形。
-        sx = shot.width / float(vw)
-        sy = shot.height / float(vh)
-        side = min(int(round(side * max(sx, sy))), shot.width, shot.height)
+        # 逻辑像素 -> 源图物理像素：整块遮罩按 S 缩放，所以这里乘 S
+        side = min(int(round(side * S)), src.width, src.height)
         if side < 16:
             return
-        ccx = min(max(cx * sx, side / 2.0), shot.width - side / 2.0)
-        ccy = min(max(cy * sy, side / 2.0), shot.height - side / 2.0)
+        ccx = min(max(cx * S, side / 2.0), src.width - side / 2.0)
+        ccy = min(max(cy * S, side / 2.0), src.height - side / 2.0)
         x0 = int(ccx - side / 2.0)
         y0 = int(ccy - side / 2.0)
-        finish(shot.crop((x0, y0, x0 + side, y0 + side)).convert('RGB'))
+        finish(src.crop((x0, y0, x0 + side, y0 + side)).convert('RGB'))
 
     cv.bind('<Button-1>', on_press)
     cv.bind('<B1-Motion>', on_move)

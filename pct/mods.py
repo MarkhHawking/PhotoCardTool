@@ -134,3 +134,69 @@ def _meshes_subdir(rel):
 
 
 
+
+
+# --------------------------------------------------------------------------
+# BodySlide / Outfit Studio 工程文件
+# --------------------------------------------------------------------------
+BS_SUBDIRS = (('CalienteTools', 'BodySlide'), ('SliderSets',), ('ShapeData',))
+
+
+def scan_bodyslide(moddir, nif_stem, limit=40):
+    """在 mod 里找和这个发型相关的 BodySlide 工程（.osp / SliderSets *.xml）。
+
+    命中规则：文件名含 nif_stem，或文本里出现该 NIF 名（含 .nif 或去后缀）。
+    返回 [(绝对路径, 'osp'|'xml')]，最多 limit 条。
+    """
+    import os
+    moddir = (moddir or '').strip()
+    stem = (nif_stem or '').strip().lower()
+    if not moddir or not stem or not os.path.isdir(moddir):
+        return []
+    key = stem[:-4] if stem.endswith('.nif') else stem
+    out = []
+    for root, dirs, files in os.walk(moddir):
+        dirs[:] = [d for d in dirs if d.lower() not in ('.git', 'meshes', 'textures')]
+        low = root.lower()
+        if 'calientetools' not in low and 'slidersets' not in low and 'shapedata' not in low:
+            continue
+        for f in files:
+            fl = f.lower()
+            if not (fl.endswith('.osp') or fl.endswith('.xml')):
+                continue
+            p = os.path.join(root, f)
+            hit = key in fl
+            if not hit:
+                try:
+                    with open(p, 'r', encoding='utf-8-sig', errors='ignore') as fh:
+                        txt = fh.read(400000).lower()
+                    hit = (key + '.nif') in txt or ('>' + key + '<') in txt or ('"' + key + '"') in txt
+                except OSError:
+                    hit = False
+            if hit:
+                out.append((p, 'osp' if fl.endswith('.osp') else 'xml'))
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+OSP_TMPL = '''<?xml version="1.0" encoding="UTF-8"?>
+<SliderSet name="{name}">
+    <DataFolder>CalienteTools\\BodySlide</DataFolder>
+    <SourceFile>{nif}</SourceFile>
+    <OutputPath>CalienteTools\\BodySlide\\ShapeData\\{name}</OutputPath>
+    <OutputFile>{name}</OutputFile>
+    <Shape target="hair">{shape}</Shape>
+</SliderSet>
+'''
+
+
+def write_osp_shell(outdir, name, nif_name, shape='hair'):
+    """写一个最小可用的 .osp 骨架（滑块形变仍要在 Outfit Studio 里生成）。"""
+    import os
+    d = os.path.join(outdir, 'CalienteTools', 'BodySlide', 'SliderSets')
+    os.makedirs(d, exist_ok=True)
+    p = os.path.join(d, name + '.osp')
+    with open(p, 'w', encoding='utf-8-sig', newline='\r\n') as f:
+        f.write(OSP_TMPL.format(name=name, nif=nif_name, shape=shape))
+    return p
