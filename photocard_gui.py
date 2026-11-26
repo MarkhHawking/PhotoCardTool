@@ -1688,6 +1688,7 @@ def main_gui():
     # ---------------- 页签⓪：合并部件 ----------------
     m_base = tk.StringVar()
     m_out = tk.StringVar()
+    m_mode = tk.StringVar(value='parts')   # parts=只合勾选的部件；into=合进参考 NIF
     m_rows = []
     m_state = {'out': ''}
 
@@ -1765,10 +1766,13 @@ def main_gui():
         out = m_out.get().strip()
         parts = m_selected()
         if not (base and os.path.isfile(base)):
-            messagebox.showwarning('合并部件', '先选主 NIF。')
+            messagebox.showwarning('合并部件', '先选参考 NIF（用它来找 __HDPT_extraParts 目录）。')
             return
         if not parts:
             messagebox.showwarning('合并部件', '至少勾一个部件。')
+            return
+        if m_mode.get() == 'parts' and len(parts) < 2:
+            messagebox.showwarning('合并部件', '「只合并勾选的部件」至少要勾两个。')
             return
         if not out:
             messagebox.showwarning('合并部件', '先填输出 NIF 路径。')
@@ -1778,7 +1782,11 @@ def main_gui():
 
         def work():
             try:
-                st = nifmerge.merge(base, parts, out, log=m_log, skip_dup=False)
+                if m_mode.get() == 'parts':
+                    m_log('--- 只合并勾选的 %d 个部件（不含参考 NIF 本体）---' % len(parts))
+                    st = nifmerge.merge_parts(parts, out, log=m_log)
+                else:
+                    st = nifmerge.merge(base, parts, out, log=m_log, skip_dup=False)
                 for sk in st.get('skipped', []):
                     m_log('跳过 %s：这组网格主 NIF 里已经有了' % os.path.basename(sk))
                 m_log('写出 %s（%s 块 / %s 片形状）' % (
@@ -1832,18 +1840,24 @@ def main_gui():
         show_page(t1_host)
         m_log('已送到「卡片生成」：%s' % out)
 
-    ttk.Label(t0, text='合并部件（把同一套头发的 __HDPT_extraParts 部件并进主 NIF）',
+    ttk.Label(t0, text='合并部件（把勾选的 __HDPT_extraParts 部件合并成一个新 NIF）',
               font=_boldfont).grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 6))
 
-    ttk.Label(t0, text='主 NIF：').grid(row=1, column=0, sticky='e')
+    ttk.Label(t0, text='参考 NIF：').grid(row=1, column=0, sticky='e')
     _ent(t0, m_base, 60).grid(row=1, column=1, sticky='we', padx=(2, 4))
     ttk.Button(t0, text='浏览…', command=m_pick_base).grid(row=1, column=2, sticky='w')
-    ttk.Label(t0, text='（同级的 <名字>__HDPT_extraParts 目录里的 NIF 会自动列出来）',
+    ttk.Label(t0, text='（只用它定位同级的 <名字>__HDPT_extraParts 目录）',
               foreground='#666').grid(row=1, column=3, sticky='w', padx=(6, 0))
 
-    ttk.Label(t0, text='部件：').grid(row=2, column=0, sticky='ne', pady=(6, 0))
+    m_modef = ttk.Frame(t0)
+    m_modef.grid(row=2, column=1, columnspan=2, sticky='w', pady=(6, 0))
+    ttk.Radiobutton(m_modef, text='只合并勾选的部件（推荐）', value='parts',
+                    variable=m_mode).pack(side='left')
+    ttk.Radiobutton(m_modef, text='合进参考 NIF 本体', value='into',
+                    variable=m_mode).pack(side='left', padx=(12, 0))
+    ttk.Label(t0, text='部件：').grid(row=3, column=0, sticky='ne', pady=(6, 0))
     m_lbf = ttk.Frame(t0)
-    m_lbf.grid(row=2, column=1, columnspan=2, sticky='nsew', padx=(2, 4), pady=(6, 0))
+    m_lbf.grid(row=3, column=1, columnspan=2, sticky='nsew', padx=(2, 4), pady=(6, 0))
     m_sb = ttk.Scrollbar(m_lbf, orient='vertical')
     m_sb.pack(side='right', fill='y')
     m_cv = tk.Canvas(m_lbf, height=150, highlightthickness=0, bg=root.cget('bg'))
@@ -1855,20 +1869,20 @@ def main_gui():
     m_inner.bind('<Configure>', lambda e: m_cv.configure(scrollregion=m_cv.bbox('all')), add='+')
     m_cv.bind('<Configure>', lambda e: m_cv.itemconfigure(m_win, width=e.width), add='+')
     ttk.Label(t0, text='勾哪个就合哪个（主 NIF 里已有的也能合，\n不会自动跳过）。',
-              foreground='#666', justify='left').grid(row=2, column=3, sticky='nw', padx=(6, 0), pady=(6, 0))
+              foreground='#666', justify='left').grid(row=3, column=3, sticky='nw', padx=(6, 0), pady=(6, 0))
 
     m_btnrow = ttk.Frame(t0)
-    m_btnrow.grid(row=3, column=1, columnspan=2, sticky='w', pady=(4, 0))
+    m_btnrow.grid(row=4, column=1, columnspan=2, sticky='w', pady=(4, 0))
     ttk.Button(m_btnrow, text='重新扫描', command=m_scan).pack(side='left')
     ttk.Button(m_btnrow, text='全选', command=m_sel_all).pack(side='left', padx=(6, 0))
     ttk.Button(m_btnrow, text='全不选', command=m_sel_none).pack(side='left', padx=(6, 0))
 
-    ttk.Label(t0, text='输出 NIF：').grid(row=4, column=0, sticky='e', pady=(8, 0))
-    _ent(t0, m_out, 60).grid(row=4, column=1, sticky='we', padx=(2, 4), pady=(8, 0))
-    ttk.Button(t0, text='浏览…', command=m_pick_out).grid(row=4, column=2, sticky='w', pady=(8, 0))
+    ttk.Label(t0, text='输出 NIF：').grid(row=5, column=0, sticky='e', pady=(8, 0))
+    _ent(t0, m_out, 60).grid(row=5, column=1, sticky='we', padx=(2, 4), pady=(8, 0))
+    ttk.Button(t0, text='浏览…', command=m_pick_out).grid(row=5, column=2, sticky='w', pady=(8, 0))
 
     m_act = ttk.Frame(t0)
-    m_act.grid(row=5, column=1, columnspan=2, sticky='w', pady=(8, 0))
+    m_act.grid(row=6, column=1, columnspan=2, sticky='w', pady=(8, 0))
     m_btn_merge = ttk.Button(m_act, text='合并', command=m_do_merge)
     m_btn_merge.pack(side='left')
     m_btn_prev = ttk.Button(m_act, text='预览', command=m_preview, state='disabled')
@@ -1877,7 +1891,7 @@ def main_gui():
     m_btn_send.pack(side='left', padx=(6, 0))
 
     m_logf = ttk.Frame(t0)
-    m_logf.grid(row=6, column=0, columnspan=4, sticky='nsew', pady=(8, 0))
+    m_logf.grid(row=7, column=0, columnspan=4, sticky='nsew', pady=(8, 0))
     m_txt = tk.Text(m_logf, height=8, wrap='none', font=('Consolas', 9), state='disabled')
     m_txt.pack(side='left', fill='both', expand=True)
     m_sb2 = ttk.Scrollbar(m_logf, orient='vertical', command=m_txt.yview)
@@ -1885,7 +1899,7 @@ def main_gui():
     m_txt.configure(yscrollcommand=m_sb2.set)
 
     t0.columnconfigure(1, weight=1)
-    t0.rowconfigure(6, weight=1)
+    t0.rowconfigure(7, weight=1)
 
     CACHE_DIR['dir'] = cache_dir.get() or APP_DIR
     try:

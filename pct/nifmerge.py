@@ -268,6 +268,22 @@ def scan_parts(base_path, part_paths):
     return out
 
 
+def merge_parts(part_paths, out_path, log=print):
+    """只把「勾选的部件」合并成一个新 NIF（不含参考 NIF 本体）。
+
+    以第一个部件作为骨架宿主（每个部件都自带完整骨骼），其余部件并进去。
+    """
+    if not part_paths:
+        raise ValueError('至少给一个部件')
+    if len(part_paths) == 1:
+        raise ValueError('只有一个部件，不需要合并')
+    host = part_paths[0]
+    log('骨架宿主：%s' % os.path.basename(host))
+    st = merge(host, part_paths[1:], out_path, log=log, skip_dup=False)
+    st['host'] = host
+    return st
+
+
 def verify(path, log=print):
     """合并后的结构自检：块引用、字符串索引、顶点数。"""
     d = NP.load(path)
