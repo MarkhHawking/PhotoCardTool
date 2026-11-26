@@ -19,6 +19,7 @@ Skyrim 的 HDPT extraParts 是**独立 NIF**：每个部件都带一整套完整
 
 import os
 import struct
+import shutil
 
 import nifpatch as NP
 
@@ -100,6 +101,85 @@ def _shape_group(h, blocks):
     if shader >= 0:
         grp['texset'] = _ref(_u32(blocks[shader], SHADER_TEXSET))
     return grp
+
+
+def _tex_roots(paths):
+    """从 NIF 路径往上找带 textures 目录的根，返回去重后的根列表。"""
+    roots = []
+    for p in paths:
+        d = os.path.dirname(os.path.abspath(p))
+        for _ in range(6):
+            if os.path.isdir(os.path.join(d, 'textures')) or os.path.isdir(os.path.join(d, 'Textures')):
+                if d not in roots:
+                    roots.append(d)
+                break
+            nd = os.path.dirname(d)
+            if nd == d:
+                break
+            d = nd
+    return roots
+
+
+def copy_textures(out_path, blocks, h, roots, log=print):
+    """把 NIF 里引用的贴图复制到输出 NIF 旁边，保持相对路径不变。"""
+    pats = []
+    for i in range(len(blocks)):
+        if NP.type_name(h, i) != 'BSShaderTextureSet':
+            continue
+        b = bytes(blocks[i])
+        if len(b) < 4:
+            continue
+        n = struct.unpack_from('<I', b, 0)[0]
+        o = 4
+        for _ in range(n):
+            if o + 4 > len(b):
+                break
+            L = struct.unpack_from('<I', b, o)[0]
+            o += 4
+            raw = b[o:o + L]
+            o += L
+            t = raw.rstrip(b'\x00').decode('latin1').strip()
+            if t:
+                pats.append(t)
+    outdir = os.path.dirname(os.path.abspath(out_path))
+    done = set()
+    copied = 0
+    for t in pats:
+        rel = t.replace('/', '\\')
+        key = rel.lower()
+        if key in done:
+            continue
+        done.add(key)
+        dst = os.path.join(outdir, rel)
+        if os.path.exists(dst):
+            continue
+        src = None
+        for r in roots:
+            cand = os.path.join(r, rel)
+            if os.path.isfile(cand):
+                src = cand
+                break
+        if src is None:
+            for r in roots:
+                base = os.path.basename(rel).lower()
+                for dp, dn, fn in os.walk(os.path.join(r, 'textures')):
+                    for f in fn:
+                        if f.lower() == base:
+                            src = os.path.join(dp, f)
+                            break
+                    if src:
+                        break
+                if src:
+                    break
+        if src is None:
+            log('贴图没找到，跳过：%s' % rel)
+            continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(src, dst)
+        copied += 1
+    if copied:
+        log('贴图已随 NIF 复制到输出目录：%d 张（相对路径不变）' % copied)
+    return copied
 
 
 def merge(base_path, part_paths, out_path, log=print, skip_dup=False):
@@ -235,6 +315,11 @@ def merge(base_path, part_paths, out_path, log=print, skip_dup=False):
     bh['nb'] = len(blocks)
     doc = {'path': out_path, 'h': bh, 'blocks': blocks}
     NP.save(doc, out_path, blocks=blocks, strings=strings)
+
+    try:
+        copy_textures(out_path, blocks, bh, _tex_roots([base_path] + list(part_paths)), log=log)
+    except Exception as e:
+        log('贴图随拷失败（不影响 NIF）：%s' % e)
 
     stats['blocks_after'] = len(blocks)
     stats['strings_after'] = len(strings)

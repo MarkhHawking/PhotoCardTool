@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PhotoCard Tool v30 —— 卡片生成 / 供图拼卡 / 盒子 + ESP
+"""PhotoCard Tool v31 —— 卡片生成 / 供图拼卡 / 盒子 + ESP
 
 页签 1 卡片生成：NIF -> <名字>.dds(BC7) + _front/_side.png；预设(默认/细节/柔和) + 高级参数折叠。
 页签 2 供图拼卡：全屏框选截图(自动方图)填正面/侧面 -> 实时预览整卡 ->
@@ -1828,11 +1828,33 @@ def main_gui():
 
         threading.Thread(target=work, daemon=True).start()
 
+    def m_open_os():
+        from pct.mods import find_outfitstudio
+        exe = find_outfitstudio(mods_root.get().strip() or APP_DIR)
+        if not exe:
+            messagebox.showwarning('Outfit Studio', '没找到 OutfitStudio.exe，先去「设置 → 路径设置」确认 MO2 mods 根目录。')
+            return
+        target = m_base.get().strip()
+        if not (target and os.path.isfile(target)):
+            sel = [r['path'] for r in m_rows if r.get('var') and r['var'].get()]
+            target = sel[0] if sel else ''
+        argv = [exe] + ([target] if target and os.path.isfile(target) else [])
+        try:
+            subprocess.Popen(argv, cwd=os.path.dirname(exe))
+            m_log('已打开 Outfit Studio%s' % ('（载入 %s）' % os.path.basename(target) if len(argv) > 1 else ''))
+            m_log('在 OS 里 File → Import → From NIF 把部件加进来，Export → To NIF 导出即可（贴图不同也能合）。')
+        except Exception as e:
+            messagebox.showerror('Outfit Studio', '启动失败：%s' % e)
+
     def m_send():
         out = m_state.get('out') or m_out.get().strip()
         if not (out and os.path.isfile(out)):
             return
         nif_var.set(out)
+        try:
+            out_var.set(os.path.dirname(out))
+        except Exception:
+            pass
         try:
             load_for_preview(out)
         except Exception:
@@ -1887,6 +1909,8 @@ def main_gui():
     m_btn_merge.pack(side='left')
     m_btn_prev = ttk.Button(m_act, text='预览', command=m_preview, state='disabled')
     m_btn_prev.pack(side='left', padx=(6, 0))
+    m_btn_os = ttk.Button(m_act, text='用 Outfit Studio 打开…', command=lambda: m_open_os())
+    m_btn_os.pack(side='left', padx=(6, 0))
     m_btn_send = ttk.Button(m_act, text='送到卡片生成', command=m_send, state='disabled')
     m_btn_send.pack(side='left', padx=(6, 0))
 
