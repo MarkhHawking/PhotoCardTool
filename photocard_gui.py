@@ -1699,7 +1699,8 @@ def main_gui():
 
     def m_scan(select_dups=False):
         base = m_base.get().strip()
-        m_lb.delete(0, 'end')
+        for w in m_inner.winfo_children():
+            w.destroy()
         m_rows.clear()
         if not base or not os.path.isfile(base):
             return
@@ -1718,14 +1719,19 @@ def main_gui():
             m_log('扫描失败：%s' % exc)
             return
         for i, r in enumerate(rows):
+            r['var'] = tk.BooleanVar(value=((not r['dup']) and (not r['error'])) or select_dups)
             m_rows.append(r)
-            v = ('%d 顶点' % r['verts']) if r['verts'] else '顶点数未知'
-            tag = '（主 NIF 里已有，合并会跳过）' if r['dup'] else '（新增）'
+            v = ('%d 顶点' % r['verts']) if r['verts'] else '顶点未知'
+            tag = '主 NIF 里已有' if r['dup'] else '新增'
             if r['error']:
-                tag = '（读不了：%s）' % r['error']
-            m_lb.insert('end', '%-34s %10s  %s' % (r['name'], v, tag))
-            if (not r['dup']) or select_dups:
-                m_lb.selection_set(i)
+                tag = '读不了：%s' % r['error']
+            cb = ttk.Checkbutton(m_inner, text=r['name'], variable=r['var'])
+            cb.grid(row=i, column=0, sticky='w')
+            ttk.Label(m_inner, text='%s · %s' % (v, tag),
+                      foreground=('#a05a00' if r['dup'] else '#0a7d28')
+                      if not r['error'] else '#c00000').grid(row=i, column=1, sticky='w', padx=(8, 0))
+        m_inner.update_idletasks()
+        m_cv.configure(scrollregion=m_cv.bbox('all'))
         m_log('扫描到 %d 个部件（%d 个是主 NIF 里没有的）' % (
             len(rows), sum(1 for r in rows if not r['dup'] and not r['error'])))
 
@@ -1744,13 +1750,15 @@ def main_gui():
             m_out.set(os.path.normpath(p))
 
     def m_sel_all():
-        m_lb.selection_set(0, 'end')
+        for r in m_rows:
+            r['var'].set(True)
 
     def m_sel_none():
-        m_lb.selection_clear(0, 'end')
+        for r in m_rows:
+            r['var'].set(False)
 
     def m_selected():
-        return [m_rows[i]['path'] for i in m_lb.curselection()]
+        return [r['path'] for r in m_rows if r['var'].get()]
 
     def m_do_merge():
         base = m_base.get().strip()
@@ -1770,7 +1778,7 @@ def main_gui():
 
         def work():
             try:
-                st = nifmerge.merge(base, parts, out, log=m_log)
+                st = nifmerge.merge(base, parts, out, log=m_log, skip_dup=False)
                 for sk in st.get('skipped', []):
                     m_log('跳过 %s：这组网格主 NIF 里已经有了' % os.path.basename(sk))
                 m_log('写出 %s（%s 块 / %s 片形状）' % (
@@ -1836,12 +1844,17 @@ def main_gui():
     ttk.Label(t0, text='部件：').grid(row=2, column=0, sticky='ne', pady=(6, 0))
     m_lbf = ttk.Frame(t0)
     m_lbf.grid(row=2, column=1, columnspan=2, sticky='nsew', padx=(2, 4), pady=(6, 0))
-    m_lb = tk.Listbox(m_lbf, height=7, selectmode='extended', font=('Consolas', 9))
-    m_lb.pack(side='left', fill='both', expand=True)
-    m_sb = ttk.Scrollbar(m_lbf, orient='vertical', command=m_lb.yview)
+    m_sb = ttk.Scrollbar(m_lbf, orient='vertical')
     m_sb.pack(side='right', fill='y')
-    m_lb.configure(yscrollcommand=m_sb.set)
-    ttk.Label(t0, text='已在主 NIF 里有的会标注「跳过」；\n新增的默认勾上。',
+    m_cv = tk.Canvas(m_lbf, height=150, highlightthickness=0, bg=root.cget('bg'))
+    m_cv.pack(side='left', fill='both', expand=True)
+    m_cv.configure(yscrollcommand=m_sb.set)
+    m_sb.configure(command=m_cv.yview)
+    m_inner = ttk.Frame(m_cv)
+    m_win = m_cv.create_window((0, 0), window=m_inner, anchor='nw')
+    m_inner.bind('<Configure>', lambda e: m_cv.configure(scrollregion=m_cv.bbox('all')), add='+')
+    m_cv.bind('<Configure>', lambda e: m_cv.itemconfigure(m_win, width=e.width), add='+')
+    ttk.Label(t0, text='勾哪个就合哪个（主 NIF 里已有的也能合，\n不会自动跳过）。',
               foreground='#666', justify='left').grid(row=2, column=3, sticky='nw', padx=(6, 0), pady=(6, 0))
 
     m_btnrow = ttk.Frame(t0)

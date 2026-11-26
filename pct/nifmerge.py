@@ -101,7 +101,7 @@ def _shape_group(h, blocks):
     return grp
 
 
-def merge(base_path, part_paths, out_path, log=print):
+def merge(base_path, part_paths, out_path, log=print, skip_dup=False):
     """把若干同骨架部件合并进主 NIF，写出 out_path。返回统计 dict。"""
     base = NP.load(base_path)
     bh, blocks = base['h'], [bytearray(b) for b in base['blocks']]
@@ -136,7 +136,7 @@ def merge(base_path, part_paths, out_path, log=print):
         ph, pblocks = part['h'], part['blocks']
         grp = _shape_group(ph, pblocks)
         pt_idx = grp.get('skinpart', -1)
-        if pt_idx is not None and pt_idx >= 0:
+        if skip_dup and pt_idx is not None and pt_idx >= 0:
             blob = bytes(pblocks[pt_idx])
             if blob in have:
                 log('跳过 %s：这组网格主 NIF 里已经有了' % os.path.basename(pp))
