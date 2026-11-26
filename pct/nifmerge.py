@@ -23,6 +23,7 @@ import struct
 import nifpatch as NP
 
 SHAPE_T = 'BSTriShape'
+REUSE_ROLES = ('shader', 'texset', 'alpha')
 
 # 块内字段偏移（字节）
 NAME = 0          # 所有带名字的块：字符串索引
@@ -115,6 +116,9 @@ def merge(base_path, part_paths, out_path, log=print, skip_dup=False):
         raise ValueError('根节点异常')
 
     stats = {'base': base_path, 'parts': [], 'blocks': nb0, 'skipped': []}
+    by_bytes = {}
+    for _i in range(nb0):
+        by_bytes[(NP.type_name(bh, _i), bytes(blocks[_i]))] = _i
     new_types = []          # 追加块对应的类型名（按追加顺序）
 
     # 主 NIF 里已有网格的指纹（用 NiSkinPartition 的原始字节判断"同一个网格"）
@@ -142,22 +146,34 @@ def merge(base_path, part_paths, out_path, log=print, skip_dup=False):
                 log('跳过 %s：这组网格主 NIF 里已经有了' % os.path.basename(pp))
                 stats['skipped'].append(pp)
                 continue
-        # 角色 -> 新块号
+        # 角色 -> 新块号；材质/贴图/alpha 与已有块完全相同就复用，不重复追加
         order = ['shape', 'skin', 'skindata', 'skinpart', 'shader', 'texset', 'alpha']
         mapping = {}
+        appended = []
         new_n = len(blocks)
         for role in order:
             idx = grp.get(role, -1)
             if idx is None or idx < 0:
                 continue
-            mapping[idx] = new_n + len(mapping)
+            blob = bytes(pblocks[idx])
+            key = (NP.type_name(ph, idx), blob)
+            if role in REUSE_ROLES and key in by_bytes:
+                mapping[idx] = by_bytes[key]
+                stats['reused'] = stats.get('reused', 0) + 1
+            elif role in REUSE_ROLES and role in ('shader', 'texset'):
+                # 材质/贴图在宿主里没有完全相同的块：追加一对新块，NifSkope 解析会失败
+                raise ValueError(
+                    '部件 %s 的材质（贴图）和宿主不一样，这种合并暂时不支持。\n'
+                    '请用 Outfit Studio 合并，或先确认两个部件用的是同一套贴图。'
+                    % os.path.basename(pp))
+            else:
+                mapping[idx] = new_n + len(appended)
+                appended.append((role, idx, key))
         # 复制块
-        for role in order:
-            idx = grp.get(role, -1)
-            if idx is None or idx < 0:
-                continue
+        for role, idx, key in appended:
             blocks.append(bytearray(pblocks[idx]))
             new_types.append(NP.type_name(ph, idx))
+            by_bytes[key] = len(blocks) - 1
         # 重写引用
         def remap(buf, off):
             v = _u32(buf, off)
@@ -177,7 +193,8 @@ def merge(base_path, part_paths, out_path, log=print, skip_dup=False):
             remap(kb, SKIN_DATA)
             remap(kb, SKIN_PART)
             # SKIN_ROOT 指向骨骼节点，节点区位不变，保持原值
-        if grp.get('shader', -1) >= 0 and grp['shader'] in mapping:
+        if (grp.get('shader', -1) >= 0 and grp['shader'] in mapping
+                and mapping[grp['shader']] >= new_n):
             hb = blocks[mapping[grp['shader']]]
             v = _u32(hb, NAME)
             if v != 0xFFFFFFFF:

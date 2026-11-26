@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PhotoCard Tool v24 —— 卡片生成 / 供图拼卡 / 盒子 + ESP
+"""PhotoCard Tool v30 —— 卡片生成 / 供图拼卡 / 盒子 + ESP
 
 页签 1 卡片生成：NIF -> <名字>.dds(BC7) + _front/_side.png；预设(默认/细节/柔和) + 高级参数折叠。
 页签 2 供图拼卡：全屏框选截图(自动方图)填正面/侧面 -> 实时预览整卡 ->
