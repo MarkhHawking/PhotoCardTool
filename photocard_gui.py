@@ -986,6 +986,9 @@ def main_gui():
     ttk.Button(mod_row, text='扫描 mods', command=lambda: refresh_mods()).pack(side='left')
     ttk.Button(mod_row, text='定位素材', command=lambda: locate()).pack(side='left', padx=(6, 0))
     ttk.Button(mod_row, text='生成 BodySlide 工程…', command=lambda: make_bs_shell()).pack(side='left', padx=(6, 0))
+    ttk.Button(mod_row, text='打开 BodySlide', command=lambda: open_bodyslide()).pack(side='left', padx=(6, 0))
+    ttk.Button(mod_row, text='打开 Outfit Studio',
+               command=lambda: open_bodyslide('os')).pack(side='left', padx=(6, 0))
     r += 1
     ttk.Label(t2, text='（mods 根目录 / 游戏 Data 在「设置 → 路径设置…」里改）',
               foreground='#777').grid(row=r, column=0, columnspan=4, sticky='w')
@@ -1499,6 +1502,31 @@ def main_gui():
             subprocess.Popen(['explorer', '/select,', os.path.abspath(p)])
         except Exception:
             pass
+
+    def _tool_exe(which='bs'):
+        from pct.mods import find_bodyslide, find_outfitstudio
+        root = mods_root.get().strip()
+        return (find_bodyslide(root) if which == 'bs' else find_outfitstudio(root))
+
+    def open_bodyslide(which='bs'):
+        """调用 mods 里的 BodySlide / Outfit Studio（GUI，用来 Batch Build / Conform）。"""
+        exe = _tool_exe(which)
+        label = 'BodySlide' if which == 'bs' else 'Outfit Studio'
+        if not exe:
+            messagebox.showwarning(
+                '没找到 ' + label,
+                '在「MO2 mods 根目录」下没找到 %s 的可执行文件。\n'
+                '请确认已安装 BodySlide and Outfit Studio，并在'
+                '「设置 → 路径设置…」里把 mods 根目录指对。' % label)
+            return
+        try:
+            subprocess.Popen([exe], cwd=os.path.dirname(exe))
+        except Exception as e:
+            messagebox.showerror('启动失败', str(e))
+            return
+        log2_to('已启动 %s：%s' % (label, exe))
+        log2_to('在 %s 里选中左侧的 outfit，按「Batch Build」即可生成 NIF'
+                '（滑块形变由它计算）。' % label)
 
     def esp_path_now():
         n = (esp_name.get().strip() or 'Hair_BoxWorld')

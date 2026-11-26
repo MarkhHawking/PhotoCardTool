@@ -191,6 +191,37 @@ OSP_TMPL = '''<?xml version="1.0" encoding="UTF-8"?>
 '''
 
 
+def find_tool(mods_root, exe_names, folder_hint=''):
+    """在 mods 根目录下找 BodySlide / Outfit Studio 的可执行文件。
+
+    exe_names: 候选文件名（小写比较），例如 ['bodyslide.exe', 'bodyslide x64.exe']。
+    返回找到的第一个绝对路径，找不到返回 ''。
+    """
+    import os
+    root = (mods_root or '').strip()
+    if not root or not os.path.isdir(root):
+        return ''
+    names = [n.lower() for n in exe_names]
+    for dirpath, dirnames, filenames in os.walk(root):
+        low = [f.lower() for f in filenames]
+        for want in names:
+            if want in low:
+                return os.path.join(dirpath, filenames[low.index(want)])
+        # 只在每层往下 4 级以内深搜，避免扫整个 mods
+        if dirpath.count(os.sep) - root.count(os.sep) >= 4:
+            dirnames[:] = []
+    return ''
+
+
+def find_bodyslide(mods_root):
+    return find_tool(mods_root, ['bodyslide.exe', 'bodyslide x64.exe', 'bodyslide_x64.exe'])
+
+
+def find_outfitstudio(mods_root):
+    return find_tool(mods_root, ['outfitstudio.exe', 'outfitstudio x64.exe',
+                                 'outfitstudio_x64.exe'])
+
+
 def write_osp_shell(outdir, name, nif_name, shape='hair'):
     """写一个最小可用的 .osp 骨架（滑块形变仍要在 Outfit Studio 里生成）。"""
     import os
