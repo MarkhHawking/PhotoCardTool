@@ -72,6 +72,7 @@ from pct.mods import (scan_bodyslide, write_osp_shell, _index_cache, _meshes_sub
                       scan_assets, scan_mods)
 from pct.ui import (FuzzyCombo, ToolTip, _fuzzy_match, _fuzzy_rank, log_trim)
 from pct.pack import MissingTexture, make_pack
+from pct import nifmerge
 from pct.screenshots import _virtual_metrics, shoot_screen
 
 def main_gui():
@@ -263,12 +264,13 @@ def main_gui():
         cv.bind('<Leave>', lambda e: cv.unbind_all('<MouseWheel>'))
         return host, inner
 
+    t0_host, t0 = _scroll_page()      # 页签⓪ 合并部件
     t1_host, t1 = _scroll_page()      # 页签① 卡片生成（小屏可滚，生成按钮能点到）
     t2s_host, t2s = _scroll_page()        # 页签② 供图拼卡
     t2_host, t2 = _scroll_page()          # 页签③ 盒子 + ESP（沿用旧变量名）
 
     def show_page(page):
-        for w in (t1_host, t2s_host, t2_host):
+        for w in (t0_host, t1_host, t2s_host, t2_host):
             w.pack_forget()
         page.pack(fill='both', expand=True)
 
@@ -278,7 +280,8 @@ def main_gui():
     _st.configure('Warn.TEntry', fieldbackground='#ffe9b8')
     _st.configure('Warn.TCombobox', fieldbackground='#ffe9b8')
 
-    ttk.Button(bar, text='① 卡片生成', command=lambda: show_page(t1_host)).pack(side='left')
+    ttk.Button(bar, text='合并部件', command=lambda: show_page(t0_host)).pack(side='left')
+    ttk.Button(bar, text='① 卡片生成', command=lambda: show_page(t1_host)).pack(side='left', padx=(6, 0))
     ttk.Button(bar, text='② 供图拼卡', command=lambda: show_page(t2s_host)).pack(side='left', padx=(6, 0))
     ttk.Button(bar, text='③ 盒子 + ESP', command=lambda: show_page(t2_host)).pack(side='left', padx=(6, 0))
     show_page(t1_host)
@@ -1681,6 +1684,195 @@ def main_gui():
     btn_box.configure(command=job2)
     refresh_assets = lambda: locate(quiet=True)
     root.after(400, lambda: refresh_mods(quiet=True))
+
+    # ---------------- 页签⓪：合并部件 ----------------
+    m_base = tk.StringVar()
+    m_out = tk.StringVar()
+    m_rows = []
+    m_state = {'out': ''}
+
+    def m_log(msg):
+        m_txt.configure(state='normal')
+        m_txt.insert('end', msg + '\n')
+        m_txt.see('end')
+        m_txt.configure(state='disabled')
+
+    def m_scan(select_dups=False):
+        base = m_base.get().strip()
+        m_lb.delete(0, 'end')
+        m_rows.clear()
+        if not base or not os.path.isfile(base):
+            return
+        pdir = base + '__HDPT_extraParts'
+        if not os.path.isdir(pdir):
+            m_log('这个 NIF 旁边没有 __HDPT_extraParts 目录：%s' % pdir)
+            return
+        parts = [os.path.join(pdir, f) for f in sorted(os.listdir(pdir))
+                 if f.lower().endswith('.nif')]
+        if not parts:
+            m_log('目录里没有 .nif：%s' % pdir)
+            return
+        try:
+            rows = nifmerge.scan_parts(base, parts)
+        except Exception as exc:
+            m_log('扫描失败：%s' % exc)
+            return
+        for i, r in enumerate(rows):
+            m_rows.append(r)
+            v = ('%d 顶点' % r['verts']) if r['verts'] else '顶点数未知'
+            tag = '（主 NIF 里已有，合并会跳过）' if r['dup'] else '（新增）'
+            if r['error']:
+                tag = '（读不了：%s）' % r['error']
+            m_lb.insert('end', '%-34s %10s  %s' % (r['name'], v, tag))
+            if (not r['dup']) or select_dups:
+                m_lb.selection_set(i)
+        m_log('扫描到 %d 个部件（%d 个是主 NIF 里没有的）' % (
+            len(rows), sum(1 for r in rows if not r['dup'] and not r['error'])))
+
+    def m_pick_base():
+        p = filedialog.askopenfilename(title='选择主 NIF', filetypes=[('NIF', '*.nif')])
+        if not p:
+            return
+        m_base.set(os.path.normpath(p))
+        m_out.set(os.path.splitext(p)[0] + '_merged.nif')
+        m_scan()
+
+    def m_pick_out():
+        p = filedialog.asksaveasfilename(title='输出 NIF', defaultextension='.nif',
+                                         filetypes=[('NIF', '*.nif')])
+        if p:
+            m_out.set(os.path.normpath(p))
+
+    def m_sel_all():
+        m_lb.selection_set(0, 'end')
+
+    def m_sel_none():
+        m_lb.selection_clear(0, 'end')
+
+    def m_selected():
+        return [m_rows[i]['path'] for i in m_lb.curselection()]
+
+    def m_do_merge():
+        base = m_base.get().strip()
+        out = m_out.get().strip()
+        parts = m_selected()
+        if not (base and os.path.isfile(base)):
+            messagebox.showwarning('合并部件', '先选主 NIF。')
+            return
+        if not parts:
+            messagebox.showwarning('合并部件', '至少勾一个部件。')
+            return
+        if not out:
+            messagebox.showwarning('合并部件', '先填输出 NIF 路径。')
+            return
+        m_btn_merge.configure(state='disabled')
+        m_log('--- 开始合并：%d 个部件 ---' % len(parts))
+
+        def work():
+            try:
+                st = nifmerge.merge(base, parts, out, log=m_log)
+                for sk in st.get('skipped', []):
+                    m_log('跳过 %s：这组网格主 NIF 里已经有了' % os.path.basename(sk))
+                m_log('写出 %s（%s 块 / %s 片形状）' % (
+                    out, st.get('blocks', '?'), (st.get('shapes') or '?')))
+                bad = nifmerge.verify(out, log=m_log)
+                m_log('自检：%s' % ('通过' if not bad else '有问题 %s' % bad))
+                m_state['out'] = out
+                root.after(0, lambda: (m_btn_prev.configure(state='normal'),
+                                       m_btn_send.configure(state='normal'),
+                                       m_log('可以点「预览」看图，或「送到卡片生成」')))
+            except Exception as exc:
+                m_log('失败：%s' % exc)
+                traceback.print_exc()
+            finally:
+                root.after(0, lambda: m_btn_merge.configure(state='normal'))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def m_preview():
+        out = m_state.get('out') or m_out.get().strip()
+        if not (out and os.path.isfile(out)):
+            return
+        m_log('渲染中…')
+
+        def work():
+            try:
+                sc = load_scene(out)
+                img = panel(render_view(sc, 900, 0.0, 0.0))
+                img.thumbnail((420, 420))
+                top = tk.Toplevel(root)
+                top.title('合并结果预览 — %s' % os.path.basename(out))
+                ph = ImageTk.PhotoImage(img)
+                lb = tk.Label(top, image=ph, bg='#2e2e2e')
+                lb.image = ph
+                lb.pack(padx=8, pady=8)
+                m_log('已打开预览窗口')
+            except Exception as exc:
+                m_log('预览失败：%s' % exc)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def m_send():
+        out = m_state.get('out') or m_out.get().strip()
+        if not (out and os.path.isfile(out)):
+            return
+        nif_var.set(out)
+        try:
+            load_for_preview(out)
+        except Exception:
+            pass
+        show_page(t1_host)
+        m_log('已送到「卡片生成」：%s' % out)
+
+    ttk.Label(t0, text='合并部件（把同一套头发的 __HDPT_extraParts 部件并进主 NIF）',
+              font=_boldfont).grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 6))
+
+    ttk.Label(t0, text='主 NIF：').grid(row=1, column=0, sticky='e')
+    _ent(t0, m_base, 60).grid(row=1, column=1, sticky='we', padx=(2, 4))
+    ttk.Button(t0, text='浏览…', command=m_pick_base).grid(row=1, column=2, sticky='w')
+    ttk.Label(t0, text='（同级的 <名字>__HDPT_extraParts 目录里的 NIF 会自动列出来）',
+              foreground='#666').grid(row=1, column=3, sticky='w', padx=(6, 0))
+
+    ttk.Label(t0, text='部件：').grid(row=2, column=0, sticky='ne', pady=(6, 0))
+    m_lbf = ttk.Frame(t0)
+    m_lbf.grid(row=2, column=1, columnspan=2, sticky='nsew', padx=(2, 4), pady=(6, 0))
+    m_lb = tk.Listbox(m_lbf, height=7, selectmode='extended', font=('Consolas', 9))
+    m_lb.pack(side='left', fill='both', expand=True)
+    m_sb = ttk.Scrollbar(m_lbf, orient='vertical', command=m_lb.yview)
+    m_sb.pack(side='right', fill='y')
+    m_lb.configure(yscrollcommand=m_sb.set)
+    ttk.Label(t0, text='已在主 NIF 里有的会标注「跳过」；\n新增的默认勾上。',
+              foreground='#666', justify='left').grid(row=2, column=3, sticky='nw', padx=(6, 0), pady=(6, 0))
+
+    m_btnrow = ttk.Frame(t0)
+    m_btnrow.grid(row=3, column=1, columnspan=2, sticky='w', pady=(4, 0))
+    ttk.Button(m_btnrow, text='重新扫描', command=m_scan).pack(side='left')
+    ttk.Button(m_btnrow, text='全选', command=m_sel_all).pack(side='left', padx=(6, 0))
+    ttk.Button(m_btnrow, text='全不选', command=m_sel_none).pack(side='left', padx=(6, 0))
+
+    ttk.Label(t0, text='输出 NIF：').grid(row=4, column=0, sticky='e', pady=(8, 0))
+    _ent(t0, m_out, 60).grid(row=4, column=1, sticky='we', padx=(2, 4), pady=(8, 0))
+    ttk.Button(t0, text='浏览…', command=m_pick_out).grid(row=4, column=2, sticky='w', pady=(8, 0))
+
+    m_act = ttk.Frame(t0)
+    m_act.grid(row=5, column=1, columnspan=2, sticky='w', pady=(8, 0))
+    m_btn_merge = ttk.Button(m_act, text='合并', command=m_do_merge)
+    m_btn_merge.pack(side='left')
+    m_btn_prev = ttk.Button(m_act, text='预览', command=m_preview, state='disabled')
+    m_btn_prev.pack(side='left', padx=(6, 0))
+    m_btn_send = ttk.Button(m_act, text='送到卡片生成', command=m_send, state='disabled')
+    m_btn_send.pack(side='left', padx=(6, 0))
+
+    m_logf = ttk.Frame(t0)
+    m_logf.grid(row=6, column=0, columnspan=4, sticky='nsew', pady=(8, 0))
+    m_txt = tk.Text(m_logf, height=8, wrap='none', font=('Consolas', 9), state='disabled')
+    m_txt.pack(side='left', fill='both', expand=True)
+    m_sb2 = ttk.Scrollbar(m_logf, orient='vertical', command=m_txt.yview)
+    m_sb2.pack(side='right', fill='y')
+    m_txt.configure(yscrollcommand=m_sb2.set)
+
+    t0.columnconfigure(1, weight=1)
+    t0.rowconfigure(6, weight=1)
 
     CACHE_DIR['dir'] = cache_dir.get() or APP_DIR
     try:

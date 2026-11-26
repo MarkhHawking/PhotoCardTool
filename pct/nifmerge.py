@@ -42,6 +42,10 @@ def _u32(b, off):
     return struct.unpack_from('<I', b, off)[0]
 
 
+def _ref(val):
+    return -1 if val == 0xFFFFFFFF else val
+
+
 def _put32(b, off, val):
     struct.pack_into('<I', b, off, val & 0xFFFFFFFF)
 
@@ -221,6 +225,47 @@ def merge(base_path, part_paths, out_path, log=print):
     log('合并完成：%d 块 / %d 字符串 / 根节点子项 %d'
         % (stats['blocks_after'], stats['strings_after'], stats['children']))
     return stats
+
+
+def scan_parts(base_path, part_paths):
+    """给界面用：逐个部件返回 {path, name, verts, dup, error}。
+
+    dup=True 表示这片网格主 NIF 里已经有了（合并时会被跳过）。
+    """
+    base = NP.load(base_path)
+    bh, blocks = base['h'], base['blocks']
+    have = set()
+    for i in range(bh['nb']):
+        if NP.type_name(bh, i) != SHAPE_T:
+            continue
+        b = blocks[i]
+        sk = _ref(_u32(b, SHAPE_SKIN))
+        if sk < 0 or sk >= bh['nb']:
+            continue
+        pt = _ref(_u32(blocks[sk], SKIN_PART))
+        if pt >= 0 and pt < bh['nb']:
+            have.add(bytes(blocks[pt]))
+
+    out = []
+    for pp in part_paths:
+        d = {'path': pp, 'name': os.path.basename(pp),
+             'verts': 0, 'dup': False, 'error': ''}
+        try:
+            p = NP.load(pp)
+            ph, pb = p['h'], p['blocks']
+            grp = _shape_group(ph, pb)
+            try:
+                from pct.scene import load_scene
+                d['verts'] = len(load_scene(pp)['pos'])
+            except Exception:
+                d['verts'] = 0
+            pt = grp.get('skinpart', -1)
+            if pt >= 0 and pt < len(pb):
+                d['dup'] = bytes(pb[pt]) in have
+        except Exception as exc:
+            d['error'] = str(exc)
+        out.append(d)
+    return out
 
 
 def verify(path, log=print):
