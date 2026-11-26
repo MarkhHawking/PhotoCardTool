@@ -33,7 +33,10 @@ def load_scene(nif_path):
     root = PC.find_root(nif_path)
     t = PC.load_texture(tex, root)
     if t is None:
-        raise MissingTexture('找不到贴图：%s' % ', '.join([x for x in tex if x] or ['<nif 未引用贴图>']))
+        from pct.pack import MissingTexture
+        names = [(x.decode('latin1') if isinstance(x, bytes) else str(x))
+                 for x in tex if x] or ['<nif 未引用贴图>']
+        raise MissingTexture('找不到贴图：%s' % ', '.join(names))
     return dict(pos=pos, uvs=uvs, tris=tris, tex=t, root=root, texpaths=[x for x in tex if x])
 
 
